@@ -20,7 +20,7 @@ void FMPatchEditor::setupUI()
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
 
-    // Top section: Algorithm display and global controls
+    // Top section: Algorithm display and envelope previews
     QHBoxLayout* topLayout = new QHBoxLayout();
 
     // Algorithm visualization
@@ -46,25 +46,36 @@ void FMPatchEditor::setupUI()
 
     topLayout->addWidget(algGroup);
 
-    // Envelope visualization
-    QGroupBox* envGroup = new QGroupBox("Envelope Preview");
-    QVBoxLayout* envLayout = new QVBoxLayout(envGroup);
+    // Envelope visualizations - 2x2 grid
+    QGroupBox* envGroup = new QGroupBox("Operator Envelopes");
+    QGridLayout* envGrid = new QGridLayout(envGroup);
+    envGrid->setSpacing(4);
 
-    m_envelopeWidget = new EnvelopeWidget();
-    envLayout->addWidget(m_envelopeWidget);
+    // Visual order: OP1, OP2, OP3, OP4 in 2x2 grid
+    // TFI storage: S1(0), S3(1), S2(2), S4(3)
+    // Visual OP1=TFI[0], OP2=TFI[2], OP3=TFI[1], OP4=TFI[3]
+    int visualToTFI[4] = {0, 2, 1, 3};
+    int gridPos[4][2] = {{0, 0}, {0, 1}, {1, 0}, {1, 1}};  // row, col for OP1-4
 
-    QHBoxLayout* envControls = new QHBoxLayout();
-    envControls->addWidget(new QLabel("Operator:"));
-    m_envelopeOpSelect = new QComboBox();
-    m_envelopeOpSelect->addItem("OP 1");
-    m_envelopeOpSelect->addItem("OP 2");
-    m_envelopeOpSelect->addItem("OP 3");
-    m_envelopeOpSelect->addItem("OP 4");
-    envControls->addWidget(m_envelopeOpSelect);
-    envControls->addStretch();
-    envLayout->addLayout(envControls);
+    for (int vis = 0; vis < 4; vis++) {
+        int tfi = visualToTFI[vis];
+        m_envelopes[tfi] = new EnvelopeWidget();
+        m_envelopes[tfi]->setCompact(true);
+        m_envelopes[tfi]->setOperatorNumber(vis + 1);
+        envGrid->addWidget(m_envelopes[tfi], gridPos[vis][0], gridPos[vis][1]);
 
-    topLayout->addWidget(envGroup);
+        // Connect envelope drag signals using lambdas to capture the TFI index
+        connect(m_envelopes[tfi], &EnvelopeWidget::attackChanged,
+                this, [this, tfi](int value) { onEnvelopeAttackChanged(tfi, value); });
+        connect(m_envelopes[tfi], &EnvelopeWidget::decayChanged,
+                this, [this, tfi](int value) { onEnvelopeDecayChanged(tfi, value); });
+        connect(m_envelopes[tfi], &EnvelopeWidget::sustainLevelChanged,
+                this, [this, tfi](int value) { onEnvelopeSustainLevelChanged(tfi, value); });
+        connect(m_envelopes[tfi], &EnvelopeWidget::releaseChanged,
+                this, [this, tfi](int value) { onEnvelopeReleaseChanged(tfi, value); });
+    }
+
+    topLayout->addWidget(envGroup, 1);  // Give envelope section more stretch
 
     mainLayout->addLayout(topLayout);
 
@@ -72,12 +83,7 @@ void FMPatchEditor::setupUI()
     QGroupBox* opsGroup = new QGroupBox("Operators");
     QHBoxLayout* opsLayout = new QHBoxLayout(opsGroup);
 
-    // Create 4 operator widgets
-    // Visual order: OP1, OP2, OP3, OP4
-    // TFI storage order: S1(0), S3(1), S2(2), S4(3)
-    // So visual OP1=TFI[0], OP2=TFI[2], OP3=TFI[1], OP4=TFI[3]
-    int visualToTFI[4] = {0, 2, 1, 3};
-
+    // Create 4 operator widgets in visual order
     for (int vis = 0; vis < 4; vis++) {
         int tfi = visualToTFI[vis];
         m_operators[tfi] = new OperatorWidget(vis);
@@ -96,8 +102,6 @@ void FMPatchEditor::setupUI()
             this, &FMPatchEditor::onFeedbackChanged);
     connect(m_algorithmWidget, &AlgorithmWidget::algorithmClicked,
             m_algorithmCombo, &QComboBox::setCurrentIndex);
-    connect(m_envelopeOpSelect, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &FMPatchEditor::onOperatorSelected);
 }
 
 void FMPatchEditor::setPatch(const FMPatch& patch)
@@ -114,7 +118,7 @@ void FMPatchEditor::setPatch(const FMPatch& patch)
     }
 
     updateCarrierStates();
-    updateEnvelopeDisplay();
+    updateEnvelopeDisplays();
 
     m_updating = false;
 }
@@ -159,21 +163,47 @@ void FMPatchEditor::onOperatorChanged()
         m_patch.op[i] = m_operators[i]->getOperator();
     }
 
-    updateEnvelopeDisplay();
+    updateEnvelopeDisplays();
 
     if (!m_updating) {
         emit patchChanged();
     }
 }
 
-void FMPatchEditor::onOperatorSelected(int index)
+void FMPatchEditor::onEnvelopeAttackChanged(int opIndex, int value)
 {
-    // Map visual index to TFI index
-    int visualToTFI[4] = {0, 2, 1, 3};
-    int tfi = visualToTFI[index];
+    if (m_updating) return;
 
-    const FMOperator& op = m_patch.op[tfi];
-    m_envelopeWidget->setEnvelope(op.ar, op.dr, op.sr, op.rr, op.sl, op.tl);
+    m_operators[opIndex]->setAR(value);
+    m_patch.op[opIndex].ar = value;
+    emit patchChanged();
+}
+
+void FMPatchEditor::onEnvelopeDecayChanged(int opIndex, int value)
+{
+    if (m_updating) return;
+
+    m_operators[opIndex]->setDR(value);
+    m_patch.op[opIndex].dr = value;
+    emit patchChanged();
+}
+
+void FMPatchEditor::onEnvelopeSustainLevelChanged(int opIndex, int value)
+{
+    if (m_updating) return;
+
+    m_operators[opIndex]->setSL(value);
+    m_patch.op[opIndex].sl = value;
+    emit patchChanged();
+}
+
+void FMPatchEditor::onEnvelopeReleaseChanged(int opIndex, int value)
+{
+    if (m_updating) return;
+
+    m_operators[opIndex]->setRR(value);
+    m_patch.op[opIndex].rr = value;
+    emit patchChanged();
 }
 
 void FMPatchEditor::updateCarrierStates()
@@ -181,17 +211,19 @@ void FMPatchEditor::updateCarrierStates()
     bool carriers[4];
     m_algorithmWidget->getCarrierMask(carriers);
 
-    for (int i = 0; i < 4; i++) {
-        m_operators[i]->setCarrier(carriers[i]);
+    // Visual to TFI mapping
+    int visualToTFI[4] = {0, 2, 1, 3};
+
+    for (int vis = 0; vis < 4; vis++) {
+        int tfi = visualToTFI[vis];
+        m_operators[tfi]->setCarrier(carriers[vis]);
+        m_envelopes[tfi]->setIsCarrier(carriers[vis]);
     }
 }
 
-void FMPatchEditor::updateEnvelopeDisplay()
+void FMPatchEditor::updateEnvelopeDisplays()
 {
-    int visIndex = m_envelopeOpSelect->currentIndex();
-    int visualToTFI[4] = {0, 2, 1, 3};
-    int tfi = visualToTFI[visIndex];
-
-    const FMOperator& op = m_patch.op[tfi];
-    m_envelopeWidget->setEnvelope(op.ar, op.dr, op.sr, op.rr, op.sl, op.tl);
+    for (int i = 0; i < 4; i++) {
+        m_envelopes[i]->setOperator(m_patch.op[i]);
+    }
 }

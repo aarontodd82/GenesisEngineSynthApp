@@ -5,7 +5,10 @@
 #include <QSpinBox>
 #include <QSlider>
 #include <QLabel>
+#include <QMenu>
 #include "Types.h"
+
+class TLBarWidget;
 
 /**
  * Widget for editing a single FM operator's parameters.
@@ -22,11 +25,23 @@ public:
 
     void setCarrier(bool isCarrier);
 
+    // Individual parameter setters (for envelope drag updates)
+    void setAR(int value);
+    void setDR(int value);
+    void setSL(int value);
+    void setRR(int value);
+
 signals:
     void operatorChanged();
 
+protected:
+    void contextMenuEvent(QContextMenuEvent* event) override;
+
 private slots:
     void onValueChanged();
+    void onCopyOperator();
+    void onPasteOperator();
+    void onResetOperator();
 
 private:
     void setupUI();
@@ -39,6 +54,7 @@ private:
     QSpinBox* m_mul;
     QSpinBox* m_dt;
     QSpinBox* m_tl;
+    TLBarWidget* m_tlBar;
     QSpinBox* m_rs;
     QSpinBox* m_ar;
     QSpinBox* m_dr;
@@ -48,6 +64,10 @@ private:
     QSpinBox* m_ssg;
 
     QLabel* m_titleLabel;
+
+    // Static clipboard for copy/paste between operators
+    static FMOperator s_clipboard;
+    static bool s_clipboardValid;
 };
 
 #endif // OPERATORWIDGET_H

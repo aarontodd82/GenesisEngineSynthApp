@@ -1,8 +1,14 @@
 #include "OperatorWidget.h"
+#include "TLBarWidget.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
 #include <QGroupBox>
+#include <QContextMenuEvent>
+
+// Static clipboard initialization
+FMOperator OperatorWidget::s_clipboard;
+bool OperatorWidget::s_clipboardValid = false;
 
 OperatorWidget::OperatorWidget(int operatorNumber, QWidget* parent)
     : QWidget(parent)
@@ -13,8 +19,18 @@ OperatorWidget::OperatorWidget(int operatorNumber, QWidget* parent)
 
 void OperatorWidget::setupUI()
 {
-    QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(4, 4, 4, 4);
+    QHBoxLayout* outerLayout = new QHBoxLayout(this);
+    outerLayout->setContentsMargins(4, 4, 4, 4);
+    outerLayout->setSpacing(4);
+
+    // TL Bar on left side
+    m_tlBar = new TLBarWidget();
+    m_tlBar->setToolTip("Total Level - drag to adjust (0=loudest, 127=silent)");
+    outerLayout->addWidget(m_tlBar);
+
+    // Main content area
+    QVBoxLayout* mainLayout = new QVBoxLayout();
+    mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(2);
 
     // Title
@@ -103,6 +119,8 @@ void OperatorWidget::setupUI()
     mainLayout->addLayout(grid);
     mainLayout->addStretch();
 
+    outerLayout->addLayout(mainLayout, 1);
+
     // Connect signals
     connect(m_mul, QOverload<int>::of(&QSpinBox::valueChanged), this, &OperatorWidget::onValueChanged);
     connect(m_dt, QOverload<int>::of(&QSpinBox::valueChanged), this, &OperatorWidget::onValueChanged);
@@ -114,6 +132,16 @@ void OperatorWidget::setupUI()
     connect(m_rr, QOverload<int>::of(&QSpinBox::valueChanged), this, &OperatorWidget::onValueChanged);
     connect(m_sl, QOverload<int>::of(&QSpinBox::valueChanged), this, &OperatorWidget::onValueChanged);
     connect(m_ssg, QOverload<int>::of(&QSpinBox::valueChanged), this, &OperatorWidget::onValueChanged);
+
+    // TL bar and spinbox sync
+    connect(m_tlBar, &TLBarWidget::valueChanged, this, [this](int value) {
+        if (m_tl->value() != value) {
+            m_tl->setValue(value);
+        }
+    });
+    connect(m_tl, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        m_tlBar->setValue(value);
+    });
 }
 
 void OperatorWidget::setOperator(const FMOperator& op)
@@ -123,6 +151,7 @@ void OperatorWidget::setOperator(const FMOperator& op)
     m_mul->setValue(op.mul);
     m_dt->setValue(op.dt);
     m_tl->setValue(op.tl);
+    m_tlBar->setValue(op.tl);
     m_rs->setValue(op.rs);
     m_ar->setValue(op.ar);
     m_dr->setValue(op.dr);
@@ -153,6 +182,7 @@ FMOperator OperatorWidget::getOperator() const
 void OperatorWidget::setCarrier(bool isCarrier)
 {
     m_isCarrier = isCarrier;
+    m_tlBar->setCarrier(isCarrier);
 
     if (isCarrier) {
         m_titleLabel->setStyleSheet("font-weight: bold; padding: 4px; background: #664; color: #ff8;");
@@ -168,4 +198,83 @@ void OperatorWidget::onValueChanged()
     if (!m_updating) {
         emit operatorChanged();
     }
+}
+
+void OperatorWidget::setAR(int value)
+{
+    if (m_ar->value() != value) {
+        m_ar->setValue(value);
+    }
+}
+
+void OperatorWidget::setDR(int value)
+{
+    if (m_dr->value() != value) {
+        m_dr->setValue(value);
+    }
+}
+
+void OperatorWidget::setSL(int value)
+{
+    if (m_sl->value() != value) {
+        m_sl->setValue(value);
+    }
+}
+
+void OperatorWidget::setRR(int value)
+{
+    if (m_rr->value() != value) {
+        m_rr->setValue(value);
+    }
+}
+
+void OperatorWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    QMenu menu(this);
+
+    QAction* copyAction = menu.addAction("Copy Operator");
+    connect(copyAction, &QAction::triggered, this, &OperatorWidget::onCopyOperator);
+
+    QAction* pasteAction = menu.addAction("Paste Operator");
+    pasteAction->setEnabled(s_clipboardValid);
+    connect(pasteAction, &QAction::triggered, this, &OperatorWidget::onPasteOperator);
+
+    menu.addSeparator();
+
+    QAction* resetAction = menu.addAction("Reset to Default");
+    connect(resetAction, &QAction::triggered, this, &OperatorWidget::onResetOperator);
+
+    menu.exec(event->globalPos());
+}
+
+void OperatorWidget::onCopyOperator()
+{
+    s_clipboard = getOperator();
+    s_clipboardValid = true;
+}
+
+void OperatorWidget::onPasteOperator()
+{
+    if (s_clipboardValid) {
+        setOperator(s_clipboard);
+        emit operatorChanged();
+    }
+}
+
+void OperatorWidget::onResetOperator()
+{
+    FMOperator defaultOp;
+    defaultOp.mul = 1;
+    defaultOp.dt = 3;  // Center detune
+    defaultOp.tl = 0;
+    defaultOp.rs = 0;
+    defaultOp.ar = 31;
+    defaultOp.dr = 0;
+    defaultOp.sr = 0;
+    defaultOp.rr = 15;
+    defaultOp.sl = 0;
+    defaultOp.ssg = 0;
+
+    setOperator(defaultOp);
+    emit operatorChanged();
 }

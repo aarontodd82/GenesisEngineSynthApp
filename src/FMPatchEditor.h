@@ -31,12 +31,15 @@ private slots:
     void onAlgorithmChanged(int value);
     void onFeedbackChanged(int value);
     void onOperatorChanged();
-    void onOperatorSelected(int index);
+    void onEnvelopeAttackChanged(int opIndex, int value);
+    void onEnvelopeDecayChanged(int opIndex, int value);
+    void onEnvelopeSustainLevelChanged(int opIndex, int value);
+    void onEnvelopeReleaseChanged(int opIndex, int value);
 
 private:
     void setupUI();
     void updateCarrierStates();
-    void updateEnvelopeDisplay();
+    void updateEnvelopeDisplays();
 
     FMPatch m_patch;
     bool m_updating = false;
@@ -50,8 +53,7 @@ private:
 
     // Visualization
     AlgorithmWidget* m_algorithmWidget;
-    EnvelopeWidget* m_envelopeWidget;
-    QComboBox* m_envelopeOpSelect;
+    std::array<EnvelopeWidget*, 4> m_envelopes;  // One per operator
 };
 
 #endif // FMPATCHEDITOR_H

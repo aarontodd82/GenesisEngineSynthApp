@@ -15,6 +15,7 @@ class MIDIManager;
 class PatchBank;
 class FMPatchEditor;
 class PSGEnvelopeEditor;
+class PianoKeyboardWidget;
 
 class MainWindow : public QMainWindow
 {
@@ -52,6 +53,10 @@ private slots:
 
     // Mode
     void onModeChanged(int index);
+
+    // Keyboard
+    void onKeyboardNoteOn(int note, int velocity);
+    void onKeyboardNoteOff(int note);
 
     // File menu
     void onNewBank();
@@ -96,6 +101,9 @@ private:
     // Editors
     FMPatchEditor* m_fmEditor;
     PSGEnvelopeEditor* m_psgEditor;
+
+    // Keyboard
+    PianoKeyboardWidget* m_keyboard;
 
     // Mode selector
     QComboBox* m_modeCombo;

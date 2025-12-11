@@ -1,32 +1,101 @@
 #include "EnvelopeWidget.h"
 #include <QPainter>
 #include <QPainterPath>
+#include <QMouseEvent>
+#include <QtMath>
 
 EnvelopeWidget::EnvelopeWidget(QWidget* parent)
     : QWidget(parent)
 {
-    setMinimumSize(200, 80);
+    setMouseTracking(true);
+    setCursor(Qt::ArrowCursor);
 }
 
-void EnvelopeWidget::setEnvelope(uint8_t ar, uint8_t dr, uint8_t sr, uint8_t rr, uint8_t sl, uint8_t tl)
+void EnvelopeWidget::setOperator(const FMOperator& op)
 {
-    m_ar = ar;
-    m_dr = dr;
-    m_sr = sr;
-    m_rr = rr;
-    m_sl = sl;
-    m_tl = tl;
+    m_ar = op.ar;
+    m_dr = op.dr;
+    m_sr = op.sr;
+    m_rr = op.rr;
+    m_sl = op.sl;
+    m_tl = op.tl;
     update();
 }
 
 QSize EnvelopeWidget::sizeHint() const
 {
-    return QSize(200, 80);
+    return m_compact ? QSize(120, 80) : QSize(200, 120);
 }
 
 QSize EnvelopeWidget::minimumSizeHint() const
 {
-    return QSize(100, 60);
+    return m_compact ? QSize(80, 50) : QSize(120, 80);
+}
+
+QRectF EnvelopeWidget::getGraphRect() const
+{
+    int margin = m_compact ? COMPACT_MARGIN : MARGIN;
+    return QRectF(margin, margin, width() - 2 * margin, height() - 2 * margin);
+}
+
+QPointF EnvelopeWidget::getAttackPoint() const
+{
+    QRectF r = getGraphRect();
+    // AR: 0 = slowest, 31 = fastest
+    // X position: higher AR = shorter attack = point closer to left
+    float attackTime = (31 - m_ar) / 31.0f * 0.3f + 0.02f;
+    float peakLevel = 1.0f - (m_tl / 127.0f);
+
+    return QPointF(r.left() + r.width() * attackTime,
+                   r.bottom() - r.height() * peakLevel);
+}
+
+QPointF EnvelopeWidget::getDecayPoint() const
+{
+    QRectF r = getGraphRect();
+    QPointF attack = getAttackPoint();
+
+    float decayTime = (31 - m_dr) / 31.0f * 0.25f + 0.02f;
+    float sustainLevel = 1.0f - (m_sl / 15.0f);
+    float peakLevel = 1.0f - (m_tl / 127.0f);
+    float actualSustain = peakLevel * sustainLevel;
+
+    return QPointF(attack.x() + r.width() * decayTime,
+                   r.bottom() - r.height() * actualSustain);
+}
+
+QPointF EnvelopeWidget::getSustainPoint() const
+{
+    QRectF r = getGraphRect();
+    QPointF decay = getDecayPoint();
+
+    // Sustain extends for a fixed visual duration
+    float sustainTime = 0.25f;
+
+    return QPointF(decay.x() + r.width() * sustainTime, decay.y());
+}
+
+QPointF EnvelopeWidget::getReleasePoint() const
+{
+    QRectF r = getGraphRect();
+    QPointF sustain = getSustainPoint();
+
+    float releaseTime = (15 - m_rr) / 15.0f * 0.2f + 0.02f;
+
+    return QPointF(qMin(sustain.x() + r.width() * releaseTime, r.right()),
+                   r.bottom());
+}
+
+EnvelopeWidget::DragPoint EnvelopeWidget::hitTest(const QPointF& pos) const
+{
+    const float hitRadius = POINT_RADIUS + 4;
+
+    if (QLineF(pos, getAttackPoint()).length() < hitRadius) return Attack;
+    if (QLineF(pos, getDecayPoint()).length() < hitRadius) return Decay;
+    if (QLineF(pos, getSustainPoint()).length() < hitRadius) return Sustain;
+    if (QLineF(pos, getReleasePoint()).length() < hitRadius) return Release;
+
+    return None;
 }
 
 void EnvelopeWidget::paintEvent(QPaintEvent* event)
@@ -36,86 +105,212 @@ void EnvelopeWidget::paintEvent(QPaintEvent* event)
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    int w = width();
-    int h = height();
-    int margin = 10;
+    QRectF r = getGraphRect();
 
     // Background
-    painter.fillRect(rect(), QColor(24, 24, 32));
+    QColor bgColor = m_isCarrier ? QColor(40, 35, 30) : QColor(30, 35, 40);
+    painter.fillRect(rect(), bgColor);
 
-    // Draw grid
-    painter.setPen(QPen(QColor(48, 48, 56), 1));
+    // Grid lines
+    painter.setPen(QPen(QColor(60, 60, 70), 1));
     for (int i = 1; i < 4; i++) {
-        int y = margin + (h - 2*margin) * i / 4;
-        painter.drawLine(margin, y, w - margin, y);
+        float y = r.top() + r.height() * i / 4;
+        painter.drawLine(QPointF(r.left(), y), QPointF(r.right(), y));
     }
 
-    // Calculate envelope points
-    // Time scaling: higher rate = shorter time
-    float attackTime = (31 - m_ar) / 31.0f * 0.25f + 0.02f;   // 2% to 27% of width
-    float decayTime = (31 - m_dr) / 31.0f * 0.2f + 0.02f;     // 2% to 22%
-    float sustainTime = 0.3f;                                   // Fixed sustain display
-    float releaseTime = (15 - m_rr) / 15.0f * 0.2f + 0.02f;   // 2% to 22%
+    // Get control points
+    QPointF startPt(r.left(), r.bottom());
+    QPointF attackPt = getAttackPoint();
+    QPointF decayPt = getDecayPoint();
+    QPointF sustainPt = getSustainPoint();
+    QPointF releasePt = getReleasePoint();
 
-    // Sustain level (0=max volume, 15=min)
-    float sustainLevel = m_sl / 15.0f;
-
-    // Total level affects peak
-    float peakLevel = 1.0f - (m_tl / 127.0f);
-
-    // Convert to pixel coordinates
-    int graphW = w - 2*margin;
-    int graphH = h - 2*margin;
-    int baseY = h - margin;
-
-    float totalTime = attackTime + decayTime + sustainTime + releaseTime;
-    float scale = graphW / totalTime;
-
-    int x0 = margin;
-    int x1 = margin + static_cast<int>(attackTime * scale);
-    int x2 = x1 + static_cast<int>(decayTime * scale);
-    int x3 = x2 + static_cast<int>(sustainTime * scale);
-    int x4 = x3 + static_cast<int>(releaseTime * scale);
-
-    int yPeak = baseY - static_cast<int>(graphH * peakLevel);
-    int ySustain = baseY - static_cast<int>(graphH * peakLevel * (1.0f - sustainLevel));
-    int yZero = baseY;
-
-    // Draw envelope path
-    QPainterPath path;
-    path.moveTo(x0, yZero);
-    path.lineTo(x1, yPeak);        // Attack
-    path.lineTo(x2, ySustain);     // Decay to sustain
-    path.lineTo(x3, ySustain);     // Sustain hold
-    path.lineTo(x4, yZero);        // Release
-
-    // Fill under curve
-    QPainterPath fillPath = path;
-    fillPath.lineTo(x4, yZero);
-    fillPath.lineTo(x0, yZero);
+    // Draw envelope fill
+    QPainterPath fillPath;
+    fillPath.moveTo(startPt);
+    fillPath.lineTo(attackPt);
+    fillPath.lineTo(decayPt);
+    fillPath.lineTo(sustainPt);
+    fillPath.lineTo(releasePt);
+    fillPath.lineTo(r.right(), r.bottom());
+    fillPath.lineTo(startPt);
     fillPath.closeSubpath();
 
-    QLinearGradient gradient(0, yPeak, 0, yZero);
-    gradient.setColorAt(0, QColor(100, 180, 255, 100));
-    gradient.setColorAt(1, QColor(60, 100, 180, 50));
-    painter.fillPath(fillPath, gradient);
+    QColor fillColor = m_isCarrier ? QColor(180, 140, 80, 60) : QColor(80, 140, 180, 60);
+    painter.fillPath(fillPath, fillColor);
 
     // Draw envelope line
-    painter.setPen(QPen(QColor(100, 180, 255), 2));
-    painter.drawPath(path);
+    QPainterPath linePath;
+    linePath.moveTo(startPt);
+    linePath.lineTo(attackPt);
+    linePath.lineTo(decayPt);
+    linePath.lineTo(sustainPt);
+    linePath.lineTo(releasePt);
 
-    // Draw phase labels
-    painter.setPen(QColor(120, 120, 140));
-    painter.setFont(QFont("Arial", 8));
-    painter.drawText(x0, h - 2, "A");
-    painter.drawText((x1 + x2) / 2 - 4, h - 2, "D");
-    painter.drawText((x2 + x3) / 2 - 4, h - 2, "S");
-    painter.drawText((x3 + x4) / 2 - 4, h - 2, "R");
+    QColor lineColor = m_isCarrier ? QColor(220, 180, 100) : QColor(100, 180, 220);
+    painter.setPen(QPen(lineColor, 2));
+    painter.drawPath(linePath);
 
-    // Draw points
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(255, 200, 100));
-    painter.drawEllipse(QPoint(x1, yPeak), 4, 4);
-    painter.drawEllipse(QPoint(x2, ySustain), 4, 4);
-    painter.drawEllipse(QPoint(x3, ySustain), 4, 4);
+    // Draw control points
+    auto drawPoint = [&](const QPointF& pt, DragPoint type, const QString& label) {
+        bool isHovered = (m_hovering == type);
+        bool isDragging = (m_dragging == type);
+
+        int radius = POINT_RADIUS;
+        if (isHovered || isDragging) radius += 2;
+
+        QColor pointColor = lineColor;
+        if (isDragging) pointColor = QColor(255, 220, 100);
+        else if (isHovered) pointColor = pointColor.lighter(130);
+
+        painter.setPen(QPen(Qt::white, 2));
+        painter.setBrush(pointColor);
+        painter.drawEllipse(pt, radius, radius);
+
+        // Label
+        if (m_showLabels && !m_compact) {
+            painter.setPen(QColor(150, 150, 160));
+            painter.setFont(QFont("Arial", 8));
+            painter.drawText(QPointF(pt.x() - 5, pt.y() - radius - 4), label);
+        }
+    };
+
+    if (!m_readOnly) {
+        drawPoint(attackPt, Attack, "A");
+        drawPoint(decayPt, Decay, "D");
+        drawPoint(sustainPt, Sustain, "S");
+        drawPoint(releasePt, Release, "R");
+    }
+
+    // Operator label
+    if (m_opNumber > 0) {
+        painter.setPen(m_isCarrier ? QColor(220, 180, 100) : QColor(100, 180, 220));
+        painter.setFont(QFont("Arial", m_compact ? 9 : 11, QFont::Bold));
+        QString label = QString("OP%1").arg(m_opNumber);
+        if (m_isCarrier) label += " (C)";
+        else label += " (M)";
+        painter.drawText(QPointF(5, m_compact ? 12 : 16), label);
+    }
+
+    // Parameter values (bottom)
+    if (m_showLabels && !m_compact) {
+        painter.setPen(QColor(120, 120, 130));
+        painter.setFont(QFont("Arial", 8));
+        QString params = QString("AR:%1 DR:%2 SL:%3 RR:%4")
+            .arg(m_ar).arg(m_dr).arg(m_sl).arg(m_rr);
+        painter.drawText(QPointF(5, height() - 5), params);
+    }
+}
+
+void EnvelopeWidget::mousePressEvent(QMouseEvent* event)
+{
+    if (m_readOnly) return;
+
+    m_dragging = hitTest(event->pos());
+    if (m_dragging != None) {
+        setCursor(Qt::ClosedHandCursor);
+        update();
+    }
+}
+
+void EnvelopeWidget::mouseMoveEvent(QMouseEvent* event)
+{
+    if (m_readOnly) return;
+
+    if (m_dragging != None) {
+        updateFromDrag(event->pos());
+    } else {
+        DragPoint hover = hitTest(event->pos());
+        if (hover != m_hovering) {
+            m_hovering = hover;
+            setCursor(hover != None ? Qt::OpenHandCursor : Qt::ArrowCursor);
+            update();
+        }
+    }
+}
+
+void EnvelopeWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+    Q_UNUSED(event);
+
+    if (m_dragging != None) {
+        m_dragging = None;
+        setCursor(m_hovering != None ? Qt::OpenHandCursor : Qt::ArrowCursor);
+        update();
+    }
+}
+
+void EnvelopeWidget::updateFromDrag(const QPointF& pos)
+{
+    QRectF r = getGraphRect();
+
+    // Normalize position to 0-1 range
+    float x = qBound(0.0f, (float)(pos.x() - r.left()) / r.width(), 1.0f);
+    float y = qBound(0.0f, (float)(pos.y() - r.top()) / r.height(), 1.0f);
+
+    bool changed = false;
+
+    switch (m_dragging) {
+        case Attack: {
+            // X controls attack rate (left = fast/high AR, right = slow/low AR)
+            int newAR = qBound(0, 31 - (int)(x * 31 / 0.32f), 31);
+            if (newAR != m_ar) {
+                m_ar = newAR;
+                emit attackChanged(m_ar);
+                changed = true;
+            }
+            break;
+        }
+        case Decay: {
+            // Y controls sustain level
+            float sustainLevel = 1.0f - y;
+            int newSL = qBound(0, (int)((1.0f - sustainLevel) * 15), 15);
+            if (newSL != m_sl) {
+                m_sl = newSL;
+                emit sustainLevelChanged(m_sl);
+                changed = true;
+            }
+            // X relative to attack point controls decay rate
+            QPointF attackPt = getAttackPoint();
+            float decayX = (pos.x() - attackPt.x()) / r.width();
+            int newDR = qBound(0, 31 - (int)(decayX * 31 / 0.27f), 31);
+            if (newDR != m_dr) {
+                m_dr = newDR;
+                emit decayChanged(m_dr);
+                changed = true;
+            }
+            break;
+        }
+        case Sustain: {
+            // Y controls sustain level
+            float peakLevel = 1.0f - (m_tl / 127.0f);
+            float relativeY = y / peakLevel;
+            int newSL = qBound(0, (int)(relativeY * 15), 15);
+            if (newSL != m_sl) {
+                m_sl = newSL;
+                emit sustainLevelChanged(m_sl);
+                changed = true;
+            }
+            break;
+        }
+        case Release: {
+            // X relative to sustain point controls release rate
+            QPointF sustainPt = getSustainPoint();
+            float releaseX = (pos.x() - sustainPt.x()) / r.width();
+            int newRR = qBound(0, 15 - (int)(releaseX * 15 / 0.22f), 15);
+            if (newRR != m_rr) {
+                m_rr = newRR;
+                emit releaseChanged(m_rr);
+                changed = true;
+            }
+            break;
+        }
+        default:
+            break;
+    }
+
+    if (changed) {
+        emit parameterChanged();
+        update();
+    }
 }

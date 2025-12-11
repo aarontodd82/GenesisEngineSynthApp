@@ -62,6 +62,8 @@ set(SOURCES
     src/AlgorithmWidget.cpp
     src/OperatorWidget.cpp
     src/EnvelopeWidget.cpp
+    src/TLBarWidget.cpp
+    src/PianoKeyboardWidget.cpp
 )
 
 set(HEADERS
@@ -75,6 +77,8 @@ set(HEADERS
     src/AlgorithmWidget.h
     src/OperatorWidget.h
     src/EnvelopeWidget.h
+    src/TLBarWidget.h
+    src/PianoKeyboardWidget.h
     src/Types.h
 )
 

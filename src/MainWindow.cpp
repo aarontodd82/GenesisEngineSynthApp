@@ -5,6 +5,7 @@
 #include "FileFormats.h"
 #include "FMPatchEditor.h"
 #include "PSGEnvelopeEditor.h"
+#include "PianoKeyboardWidget.h"
 
 #include <QMenuBar>
 #include <QMenu>
@@ -158,7 +159,12 @@ void MainWindow::setupUI()
     leftLayout->addWidget(psgBankGroup);
     leftLayout->addStretch();
 
-    // Right panel: Editors
+    // Right panel: Editors + Keyboard
+    QWidget* rightPanel = new QWidget();
+    QVBoxLayout* rightLayout = new QVBoxLayout(rightPanel);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->setSpacing(4);
+
     QTabWidget* editorTabs = new QTabWidget();
 
     m_fmEditor = new FMPatchEditor();
@@ -167,9 +173,43 @@ void MainWindow::setupUI()
     m_psgEditor = new PSGEnvelopeEditor();
     editorTabs->addTab(m_psgEditor, "PSG Envelope Editor");
 
+    rightLayout->addWidget(editorTabs, 1);
+
+    // On-screen keyboard
+    QGroupBox* keyboardGroup = new QGroupBox("Keyboard");
+    QVBoxLayout* keyboardLayout = new QVBoxLayout(keyboardGroup);
+    keyboardLayout->setContentsMargins(4, 4, 4, 4);
+
+    m_keyboard = new PianoKeyboardWidget();
+    m_keyboard->setNumOctaves(3);
+    m_keyboard->setBaseOctave(3);
+    keyboardLayout->addWidget(m_keyboard);
+
+    QHBoxLayout* keyboardControls = new QHBoxLayout();
+    keyboardControls->addWidget(new QLabel("Octave:"));
+    QSpinBox* octaveSpin = new QSpinBox();
+    octaveSpin->setRange(0, 7);
+    octaveSpin->setValue(3);
+    connect(octaveSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            m_keyboard, &PianoKeyboardWidget::setBaseOctave);
+    keyboardControls->addWidget(octaveSpin);
+
+    keyboardControls->addWidget(new QLabel("Velocity:"));
+    QSpinBox* velocitySpin = new QSpinBox();
+    velocitySpin->setRange(1, 127);
+    velocitySpin->setValue(100);
+    connect(velocitySpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            m_keyboard, &PianoKeyboardWidget::setVelocity);
+    keyboardControls->addWidget(velocitySpin);
+
+    keyboardControls->addStretch();
+    keyboardLayout->addLayout(keyboardControls);
+
+    rightLayout->addWidget(keyboardGroup);
+
     // Add to splitter
     mainSplitter->addWidget(leftPanel);
-    mainSplitter->addWidget(editorTabs);
+    mainSplitter->addWidget(rightPanel);
     mainSplitter->setStretchFactor(0, 0);
     mainSplitter->setStretchFactor(1, 1);
     mainSplitter->setSizes({280, 720});
@@ -236,6 +276,10 @@ void MainWindow::setupConnections()
     // Mode
     connect(m_modeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::onModeChanged);
+
+    // Keyboard
+    connect(m_keyboard, &PianoKeyboardWidget::noteOn, this, &MainWindow::onKeyboardNoteOn);
+    connect(m_keyboard, &PianoKeyboardWidget::noteOff, this, &MainWindow::onKeyboardNoteOff);
 }
 
 void MainWindow::refreshSerialPorts()
@@ -465,6 +509,34 @@ void MainWindow::onModeChanged(int index)
     m_serial->setSynthMode(mode);
     statusBar()->showMessage(QString("Synth mode: %1")
         .arg(mode == SynthMode::Poly ? "Poly" : "Multi"), 3000);
+}
+
+void MainWindow::onKeyboardNoteOn(int note, int velocity)
+{
+    if (!m_serial->isConnected()) return;
+
+    // Send Note On on channel 1 (0x90)
+    uint8_t channel = m_targetChannel->value() - 1;
+    std::vector<uint8_t> msg = {
+        static_cast<uint8_t>(0x90 | channel),
+        static_cast<uint8_t>(note),
+        static_cast<uint8_t>(velocity)
+    };
+    m_serial->sendRawMIDI(msg);
+}
+
+void MainWindow::onKeyboardNoteOff(int note)
+{
+    if (!m_serial->isConnected()) return;
+
+    // Send Note Off on channel 1 (0x80)
+    uint8_t channel = m_targetChannel->value() - 1;
+    std::vector<uint8_t> msg = {
+        static_cast<uint8_t>(0x80 | channel),
+        static_cast<uint8_t>(note),
+        static_cast<uint8_t>(0)
+    };
+    m_serial->sendRawMIDI(msg);
 }
 
 void MainWindow::onNewBank()
