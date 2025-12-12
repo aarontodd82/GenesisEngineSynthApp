@@ -16,7 +16,7 @@ jobs:
           - os: windows-latest
             name: Windows
             artifact: GenesisEngineSynthApp-Windows
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             name: Linux
             artifact: GenesisEngineSynthApp-Linux
           - os: macos-latest
@@ -41,10 +41,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev
+          sudo apt-get install -y libasound2-dev libfuse2 libxcb-cursor0
 
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
 
       - name: Build
         run: cmake --build build --config Release
@@ -66,13 +66,39 @@ jobs:
           macdeployqt deploy/GenesisEngineSynthApp.app
           cd deploy && zip -r ../GenesisEngineSynthApp-macOS.zip .
 
-      - name: Package (Linux)
+      - name: Create AppImage (Linux)
         if: runner.os == 'Linux'
         run: |
-          mkdir -p deploy
-          cp build/GenesisEngineSynthApp deploy/
-          chmod +x deploy/GenesisEngineSynthApp
-          cd deploy && tar -czvf ../GenesisEngineSynthApp-Linux.tar.gz .
+          # Install to AppDir
+          DESTDIR=AppDir cmake --install build
+
+          # Create desktop file
+          mkdir -p AppDir/usr/share/applications
+          cat > AppDir/usr/share/applications/genesisenginesynth.desktop << 'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Genesis Engine Synth
+          Exec=GenesisEngineSynthApp
+          Icon=genesisenginesynth
+          Categories=Audio;Music;
+          EOF
+
+          # Create icon
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          convert -size 256x256 xc:#1a1a2e -fill "#e94560" -draw "circle 128,128 128,40" AppDir/usr/share/icons/hicolor/256x256/apps/genesisenginesynth.png || \
+            convert -size 256x256 xc:navy AppDir/usr/share/icons/hicolor/256x256/apps/genesisenginesynth.png || \
+            touch AppDir/usr/share/icons/hicolor/256x256/apps/genesisenginesynth.png
+
+          # Download linuxdeploy
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy*.AppImage
+
+          # Create AppImage
+          export QMAKE=$Qt6_DIR/bin/qmake
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --plugin qt --output appimage
+
+          mv *.AppImage GenesisEngineSynthApp-Linux.AppImage
 
       - name: Upload artifact (Windows)
         if: runner.os == 'Windows'
@@ -93,7 +119,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: GenesisEngineSynthApp-Linux.tar.gz
+          path: GenesisEngineSynthApp-Linux.AppImage
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
