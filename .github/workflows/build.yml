@@ -1,0 +1,78 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+            artifact: GenesisEngineSynthApp-Windows
+          - os: ubuntu-latest
+            name: Linux
+            artifact: GenesisEngineSynthApp-Linux
+          - os: macos-latest
+            name: macOS
+            artifact: GenesisEngineSynthApp-macOS
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.name }})
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.6.*'
+          modules: 'qtserialport'
+          cache: true
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Deploy Qt (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir deploy
+          copy build\Release\GenesisEngineSynthApp.exe deploy\ 2>nul || copy build\GenesisEngineSynthApp.exe deploy\
+          windeployqt deploy\GenesisEngineSynthApp.exe
+        shell: cmd
+
+      - name: Deploy Qt (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p deploy
+          cp -R build/GenesisEngineSynthApp.app deploy/
+          macdeployqt deploy/GenesisEngineSynthApp.app
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p deploy
+          cp build/GenesisEngineSynthApp deploy/
+          chmod +x deploy/GenesisEngineSynthApp
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: deploy/
