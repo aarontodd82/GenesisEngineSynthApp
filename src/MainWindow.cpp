@@ -23,15 +23,24 @@
 #include <QSettings>
 #include <QCloseEvent>
 #include <QApplication>
+#include <QRandomGenerator>
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , m_serial(new SerialManager(this))
     , m_midi(new MIDIManager(this))
     , m_patchBank(new PatchBank(this))
+    , m_midiRxTimer(new QTimer(this))
+    , m_midiTxTimer(new QTimer(this))
 {
     setWindowTitle("Genesis Engine Synth");
     setMinimumSize(1000, 700);
+
+    // Setup LED timers (single-shot, 100ms flash duration)
+    m_midiRxTimer->setSingleShot(true);
+    m_midiRxTimer->setInterval(100);
+    m_midiTxTimer->setSingleShot(true);
+    m_midiTxTimer->setInterval(100);
 
     setupUI();
     setupMenus();
@@ -79,6 +88,13 @@ void MainWindow::setupUI()
     m_connectionStatus->setStyleSheet("color: #888;");
     connLayout->addWidget(m_connectionStatus);
 
+    // Board info label (hidden until connected)
+    m_boardInfoLabel = new QLabel();
+    m_boardInfoLabel->setWordWrap(true);
+    m_boardInfoLabel->setStyleSheet("color: #aaa; font-size: 11px; padding: 4px; background-color: #2a2a2a; border-radius: 3px;");
+    m_boardInfoLabel->hide();
+    connLayout->addWidget(m_boardInfoLabel);
+
     leftLayout->addWidget(connectionGroup);
 
     // MIDI group
@@ -96,6 +112,25 @@ void MainWindow::setupUI()
     midiRow->addWidget(m_virtualMidiButton);
     midiRow->addWidget(m_midiForwardCheck);
     midiLayout->addLayout(midiRow);
+
+    // MIDI activity LEDs
+    QHBoxLayout* midiLedRow = new QHBoxLayout();
+    midiLedRow->addWidget(new QLabel("Activity:"));
+
+    m_midiRxLed = new QLabel("RX");
+    m_midiRxLed->setFixedSize(28, 18);
+    m_midiRxLed->setAlignment(Qt::AlignCenter);
+    m_midiRxLed->setStyleSheet("background-color: #333; color: #666; border: 1px solid #555; border-radius: 3px; font-size: 10px;");
+    midiLedRow->addWidget(m_midiRxLed);
+
+    m_midiTxLed = new QLabel("TX");
+    m_midiTxLed->setFixedSize(28, 18);
+    m_midiTxLed->setAlignment(Qt::AlignCenter);
+    m_midiTxLed->setStyleSheet("background-color: #333; color: #666; border: 1px solid #555; border-radius: 3px; font-size: 10px;");
+    midiLedRow->addWidget(m_midiTxLed);
+
+    midiLedRow->addStretch();
+    midiLayout->addLayout(midiLedRow);
 
     // Disable virtual port button on Windows
     if (!m_midi->canCreateVirtualPorts()) {
@@ -131,6 +166,16 @@ void MainWindow::setupUI()
     fmButtonRow->addWidget(m_sendPatchButton);
     fmBankLayout->addLayout(fmButtonRow);
 
+    // Live Edit checkbox
+    m_liveEditCheck = new QCheckBox("Live Edit (auto-send on change)");
+    m_liveEditCheck->setToolTip("When enabled, patch changes are sent to the device in real-time");
+    fmBankLayout->addWidget(m_liveEditCheck);
+
+    // Randomize button
+    m_randomizeButton = new QPushButton("Randomize Patch");
+    m_randomizeButton->setToolTip("Generate a random FM patch with sensible constraints");
+    fmBankLayout->addWidget(m_randomizeButton);
+
     // Target selection
     QHBoxLayout* targetRow = new QHBoxLayout();
     targetRow->addWidget(new QLabel("Channel:"));
@@ -145,6 +190,29 @@ void MainWindow::setupUI()
     targetRow->addWidget(m_targetSlot);
     targetRow->addStretch();
     fmBankLayout->addLayout(targetRow);
+
+    // Channel controls (Pan, LFO)
+    QGroupBox* channelCtrlGroup = new QGroupBox("Channel Controls");
+    QGridLayout* channelCtrlLayout = new QGridLayout(channelCtrlGroup);
+
+    channelCtrlLayout->addWidget(new QLabel("Pan:"), 0, 0);
+    m_panCombo = new QComboBox();
+    m_panCombo->addItems({"Left", "Center", "Right"});
+    m_panCombo->setCurrentIndex(1);  // Default to center
+    channelCtrlLayout->addWidget(m_panCombo, 0, 1);
+
+    m_lfoEnableCheck = new QCheckBox("LFO");
+    m_lfoEnableCheck->setToolTip("Enable vibrato/tremolo LFO");
+    channelCtrlLayout->addWidget(m_lfoEnableCheck, 1, 0);
+
+    m_lfoSpeedCombo = new QComboBox();
+    m_lfoSpeedCombo->addItems({"3.98 Hz", "5.56 Hz", "6.02 Hz", "6.37 Hz",
+                               "6.88 Hz", "9.63 Hz", "48.1 Hz", "72.2 Hz"});
+    m_lfoSpeedCombo->setCurrentIndex(1);  // ~5.56 Hz default
+    m_lfoSpeedCombo->setEnabled(false);
+    channelCtrlLayout->addWidget(m_lfoSpeedCombo, 1, 1);
+
+    fmBankLayout->addWidget(channelCtrlGroup);
 
     leftLayout->addWidget(fmBankGroup);
 
@@ -203,6 +271,16 @@ void MainWindow::setupUI()
     keyboardControls->addWidget(velocitySpin);
 
     keyboardControls->addStretch();
+
+    // Panic button
+    m_panicButton = new QPushButton("PANIC");
+    m_panicButton->setToolTip("Send All Notes Off to all channels (stops stuck notes)");
+    m_panicButton->setStyleSheet(
+        "QPushButton { background-color: #600; color: #fff; font-weight: bold; padding: 4px 12px; }"
+        "QPushButton:hover { background-color: #800; }"
+        "QPushButton:pressed { background-color: #a00; }");
+    keyboardControls->addWidget(m_panicButton);
+
     keyboardLayout->addLayout(keyboardControls);
 
     rightLayout->addWidget(keyboardGroup);
@@ -255,6 +333,8 @@ void MainWindow::setupConnections()
     connect(m_serial, &SerialManager::connected, this, &MainWindow::onSerialConnected);
     connect(m_serial, &SerialManager::disconnected, this, &MainWindow::onSerialDisconnected);
     connect(m_serial, &SerialManager::connectionError, this, &MainWindow::onSerialError);
+    connect(m_serial, &SerialManager::boardTypeDetected, this, &MainWindow::onBoardTypeDetected);
+    connect(m_serial, &SerialManager::ccReceived, this, &MainWindow::onCCReceived);
 
     // MIDI connections
     connect(m_midiPortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -269,6 +349,7 @@ void MainWindow::setupConnections()
     connect(m_loadPatchButton, &QPushButton::clicked, this, &MainWindow::onLoadPatchClicked);
     connect(m_savePatchButton, &QPushButton::clicked, this, &MainWindow::onSavePatchClicked);
     connect(m_sendPatchButton, &QPushButton::clicked, this, &MainWindow::onSendPatchClicked);
+    connect(m_randomizeButton, &QPushButton::clicked, this, &MainWindow::onRandomizePatchClicked);
 
     // Editor connections
     connect(m_fmEditor, &FMPatchEditor::patchChanged, this, &MainWindow::onPatchEdited);
@@ -277,9 +358,21 @@ void MainWindow::setupConnections()
     connect(m_modeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::onModeChanged);
 
+    // Channel controls
+    connect(m_panCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onPanChanged);
+    connect(m_lfoEnableCheck, &QCheckBox::toggled, this, &MainWindow::onLfoEnableChanged);
+    connect(m_lfoSpeedCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onLfoSpeedChanged);
+
     // Keyboard
     connect(m_keyboard, &PianoKeyboardWidget::noteOn, this, &MainWindow::onKeyboardNoteOn);
     connect(m_keyboard, &PianoKeyboardWidget::noteOff, this, &MainWindow::onKeyboardNoteOff);
+    connect(m_panicButton, &QPushButton::clicked, this, &MainWindow::onPanicClicked);
+
+    // MIDI activity LED timers
+    connect(m_midiRxTimer, &QTimer::timeout, this, &MainWindow::onMidiRxLedTimeout);
+    connect(m_midiTxTimer, &QTimer::timeout, this, &MainWindow::onMidiTxLedTimeout);
 }
 
 void MainWindow::refreshSerialPorts()
@@ -374,13 +467,130 @@ void MainWindow::onSerialConnected()
 void MainWindow::onSerialDisconnected()
 {
     updateConnectionStatus();
+    m_boardInfoLabel->hide();
+    m_virtualMidiButton->setVisible(true);  // Show again for next connection
     statusBar()->showMessage("Disconnected from device", 3000);
 }
 
 void MainWindow::onSerialError(const QString& error)
 {
     updateConnectionStatus();
+    m_boardInfoLabel->hide();
     statusBar()->showMessage("Connection error: " + error, 5000);
+}
+
+void MainWindow::onBoardTypeDetected(BoardType type)
+{
+    switch (type) {
+        case BoardType::Teensy:
+            m_boardInfoLabel->setText(
+                "<b>Teensy detected</b><br>"
+                "Your DAW can connect directly to 'Teensy MIDI' for notes. "
+                "This app handles patch editing via serial. "
+                "MIDI forwarding disabled to prevent double notes.");
+            m_boardInfoLabel->setStyleSheet(
+                "color: #8cf; font-size: 11px; padding: 6px; "
+                "background-color: #1a3040; border: 1px solid #2a5070; border-radius: 3px;");
+            m_midiForwardCheck->setChecked(false);
+            m_virtualMidiButton->setVisible(false);  // Not needed for Teensy
+            break;
+
+        case BoardType::Arduino:
+            m_boardInfoLabel->setText(
+                "<b>Arduino detected</b><br>"
+                "Enable MIDI forwarding to send notes from your DAW. "
+                "Create a virtual MIDI port for your DAW to connect to.");
+            m_boardInfoLabel->setStyleSheet(
+                "color: #cf8; font-size: 11px; padding: 6px; "
+                "background-color: #2a3a1a; border: 1px solid #4a6a2a; border-radius: 3px;");
+            m_midiForwardCheck->setChecked(true);
+            m_virtualMidiButton->setVisible(true);
+            break;
+
+        case BoardType::Unknown:
+        default:
+            m_boardInfoLabel->setText(
+                "<b>Unknown board</b><br>"
+                "Could not detect board type. Configure MIDI forwarding manually.");
+            m_boardInfoLabel->setStyleSheet(
+                "color: #aaa; font-size: 11px; padding: 6px; "
+                "background-color: #2a2a2a; border: 1px solid #444; border-radius: 3px;");
+            m_virtualMidiButton->setVisible(true);
+            break;
+    }
+
+    m_boardInfoLabel->show();
+}
+
+void MainWindow::onCCReceived(uint8_t channel, uint8_t cc, uint8_t value)
+{
+    // Flash RX LED to show we received something
+    m_midiRxLed->setStyleSheet("background-color: #0f0; color: #000; border: 1px solid #0a0; border-radius: 3px; font-size: 10px;");
+    m_midiRxTimer->start();
+
+    // Only update UI if this CC is for the currently selected channel
+    uint8_t selectedChannel = m_targetChannel->value() - 1;
+    if (channel != selectedChannel) return;
+
+    // Set flag to prevent redundant SysEx sends when updating UI from hardware
+    m_updatingFromHardware = true;
+
+    // Block signals to prevent feedback loops
+    switch (cc) {
+        case 1:  // Mod wheel / LFO
+            {
+                bool lfoOn = (value > 0);
+                m_lfoEnableCheck->blockSignals(true);
+                m_lfoEnableCheck->setChecked(lfoOn);
+                m_lfoSpeedCombo->setEnabled(lfoOn);
+                m_lfoEnableCheck->blockSignals(false);
+            }
+            break;
+
+        case 10:  // Pan
+            {
+                int panIndex;
+                if (value < 43) panIndex = 0;       // Left
+                else if (value > 85) panIndex = 2;  // Right
+                else panIndex = 1;                   // Center
+
+                m_panCombo->blockSignals(true);
+                m_panCombo->setCurrentIndex(panIndex);
+                m_panCombo->blockSignals(false);
+            }
+            break;
+
+        case 14:  // Algorithm
+            if (value < 8) {
+                FMPatch patch = m_fmEditor->patch();
+                patch.algorithm = value;
+                m_fmEditor->setPatch(patch);
+            }
+            break;
+
+        case 15:  // Feedback
+            if (value < 8) {
+                FMPatch patch = m_fmEditor->patch();
+                patch.feedback = value;
+                m_fmEditor->setPatch(patch);
+            }
+            break;
+
+        case 16: case 17: case 18: case 19:  // Operator TLs
+            {
+                uint8_t op = cc - 16;
+                FMPatch patch = m_fmEditor->patch();
+                patch.op[op].tl = value;
+                m_fmEditor->setPatch(patch);
+            }
+            break;
+
+        case 64:  // Sustain pedal (just for display, no UI widget currently)
+            // Could add a sustain indicator if desired
+            break;
+    }
+
+    m_updatingFromHardware = false;
 }
 
 void MainWindow::onMIDIPortChanged(int index)
@@ -397,11 +607,16 @@ void MainWindow::onMIDIPortChanged(int index)
 
 void MainWindow::onMIDIReceived(const std::vector<uint8_t>& message)
 {
+    // Flash RX LED
+    m_midiRxLed->setStyleSheet("background-color: #0f0; color: #000; border: 1px solid #0a0; border-radius: 3px; font-size: 10px;");
+    m_midiRxTimer->start();
+
     if (!m_midiForwardCheck->isChecked()) return;
     if (!m_serial->isConnected()) return;
 
-    // Forward MIDI to serial
+    // Forward MIDI to serial and flash TX LED
     m_serial->sendRawMIDI(message);
+    flashMidiTxLed();
 }
 
 void MainWindow::onCreateVirtualPort()
@@ -489,6 +704,7 @@ void MainWindow::onSendPatchClicked()
     // Send to both slot and channel
     m_serial->sendFMPatchToSlot(slot, patch);
     m_serial->sendFMPatchToChannel(channel, patch);
+    flashMidiTxLed();
 
     statusBar()->showMessage(QString("Sent patch to channel %1 and slot %2")
         .arg(channel + 1).arg(slot), 3000);
@@ -499,6 +715,11 @@ void MainWindow::onPatchEdited()
     FMPatch patch = m_fmEditor->patch();
     patch.name = m_patchBank->fmPatch(m_selectedFMSlot).name;  // Preserve name
     m_patchBank->setFMPatch(m_selectedFMSlot, patch);
+
+    // Live edit: auto-send to device (skip if updating from hardware CC echo)
+    if (m_liveEditCheck->isChecked() && !m_updatingFromHardware) {
+        sendLivePatch();
+    }
 }
 
 void MainWindow::onModeChanged(int index)
@@ -509,6 +730,61 @@ void MainWindow::onModeChanged(int index)
     m_serial->setSynthMode(mode);
     statusBar()->showMessage(QString("Synth mode: %1")
         .arg(mode == SynthMode::Poly ? "Poly" : "Multi"), 3000);
+}
+
+void MainWindow::onPanChanged(int index)
+{
+    if (!m_serial->isConnected()) return;
+
+    uint8_t channel = m_targetChannel->value() - 1;
+
+    // Map index to CC 10 value: 0=Left (0), 1=Center (64), 2=Right (127)
+    uint8_t panValue;
+    switch (index) {
+        case 0: panValue = 0; break;    // Left
+        case 1: panValue = 64; break;   // Center
+        case 2: panValue = 127; break;  // Right
+        default: panValue = 64; break;
+    }
+
+    m_serial->sendControlChange(channel, 10, panValue);
+    flashMidiTxLed();
+}
+
+void MainWindow::onLfoEnableChanged(bool enabled)
+{
+    m_lfoSpeedCombo->setEnabled(enabled);
+
+    if (!m_serial->isConnected()) return;
+
+    uint8_t channel = m_targetChannel->value() - 1;
+
+    // Use CC 1 (Mod Wheel) to enable/disable LFO
+    // The firmware enables LFO when CC 1 > 0, disables when CC 1 = 0
+    if (enabled) {
+        // Send current speed setting as depth
+        int speedIndex = m_lfoSpeedCombo->currentIndex();
+        uint8_t depth = 64 + speedIndex * 8;  // 64-120 range
+        m_serial->sendControlChange(channel, 1, depth);
+    } else {
+        m_serial->sendControlChange(channel, 1, 0);
+    }
+
+    flashMidiTxLed();
+}
+
+void MainWindow::onLfoSpeedChanged(int index)
+{
+    if (!m_serial->isConnected()) return;
+    if (!m_lfoEnableCheck->isChecked()) return;
+
+    uint8_t channel = m_targetChannel->value() - 1;
+
+    // When LFO is enabled and speed changes, update the mod wheel value
+    // Higher values = more vibrato depth (which triggers LFO in firmware)
+    uint8_t depth = 64 + index * 8;
+    m_serial->sendControlChange(channel, 1, depth);
+    flashMidiTxLed();
 }
 
 void MainWindow::onKeyboardNoteOn(int note, int velocity)
@@ -523,6 +799,7 @@ void MainWindow::onKeyboardNoteOn(int note, int velocity)
         static_cast<uint8_t>(velocity)
     };
     m_serial->sendRawMIDI(msg);
+    flashMidiTxLed();
 }
 
 void MainWindow::onKeyboardNoteOff(int note)
@@ -537,6 +814,125 @@ void MainWindow::onKeyboardNoteOff(int note)
         static_cast<uint8_t>(0)
     };
     m_serial->sendRawMIDI(msg);
+    flashMidiTxLed();
+}
+
+void MainWindow::onPanicClicked()
+{
+    if (!m_serial->isConnected()) {
+        statusBar()->showMessage("Not connected - cannot send panic", 3000);
+        return;
+    }
+
+    // Send All Notes Off (CC 123) and All Sound Off (CC 120) on all 16 channels
+    for (uint8_t ch = 0; ch < 16; ch++) {
+        // All Sound Off (CC 120) - immediately silences all sound
+        m_serial->sendControlChange(ch, 120, 0);
+        // All Notes Off (CC 123) - releases all held notes
+        m_serial->sendControlChange(ch, 123, 0);
+    }
+
+    flashMidiTxLed();
+    statusBar()->showMessage("Panic sent - all notes off", 2000);
+}
+
+void MainWindow::onRandomizePatchClicked()
+{
+    auto* rng = QRandomGenerator::global();
+
+    FMPatch patch;
+    patch.name = "Random";
+
+    // Algorithm: any of the 8
+    patch.algorithm = rng->bounded(8);
+
+    // Feedback: 0-7, but lower values are more common for usable sounds
+    patch.feedback = rng->bounded(100) < 70 ? rng->bounded(4) : rng->bounded(8);
+
+    // Determine carrier operators based on algorithm
+    // Carriers need different treatment (audible output)
+    bool isCarrier[4];
+    switch (patch.algorithm) {
+        case 0: case 1: case 2: case 3:
+            // Algorithms 0-3: only op 4 is carrier
+            isCarrier[0] = false; isCarrier[1] = false;
+            isCarrier[2] = false; isCarrier[3] = true;
+            break;
+        case 4:
+            // Algorithm 4: ops 2 and 4 are carriers
+            isCarrier[0] = false; isCarrier[1] = true;
+            isCarrier[2] = false; isCarrier[3] = true;
+            break;
+        case 5: case 6:
+            // Algorithms 5-6: ops 2, 3, 4 are carriers
+            isCarrier[0] = false; isCarrier[1] = true;
+            isCarrier[2] = true; isCarrier[3] = true;
+            break;
+        case 7:
+            // Algorithm 7: all carriers
+            isCarrier[0] = true; isCarrier[1] = true;
+            isCarrier[2] = true; isCarrier[3] = true;
+            break;
+    }
+
+    for (int op = 0; op < 4; op++) {
+        FMOperator& o = patch.op[op];
+
+        // MUL: frequency multiplier (0=0.5x, 1-15)
+        // Lower values are more common for usable sounds
+        if (rng->bounded(100) < 60) {
+            o.mul = rng->bounded(1, 5);  // 1-4 most common
+        } else {
+            o.mul = rng->bounded(16);
+        }
+
+        // DT: detune (-3 to +3, stored as 0-7 with 3=center)
+        // Usually small detune for slight chorus
+        o.dt = rng->bounded(100) < 80 ? rng->bounded(2, 5) : rng->bounded(8);
+
+        // TL: total level (volume, 0=loudest, 127=silent)
+        if (isCarrier[op]) {
+            // Carriers: moderate volume for audible output
+            o.tl = rng->bounded(20, 60);
+        } else {
+            // Modulators: wider range, can be quiet or loud
+            o.tl = rng->bounded(100);
+        }
+
+        // RS: rate scaling (0-3) - higher = faster envelopes at high pitches
+        o.rs = rng->bounded(100) < 70 ? 0 : rng->bounded(4);
+
+        // AR: attack rate (0-31, higher = faster)
+        // Most sounds have fast attack
+        o.ar = rng->bounded(100) < 70 ? rng->bounded(20, 31) : rng->bounded(10, 31);
+
+        // DR: decay rate (0-31)
+        o.dr = rng->bounded(5, 25);
+
+        // SR: sustain rate (0-31)
+        o.sr = rng->bounded(15);
+
+        // RR: release rate (0-15, higher = faster)
+        o.rr = rng->bounded(4, 15);
+
+        // SL: sustain level (0-15, 0=loudest sustain, 15=quietest)
+        o.sl = rng->bounded(16);
+
+        // SSG-EG: usually off for normal sounds
+        o.ssg = rng->bounded(100) < 90 ? 0 : rng->bounded(1, 16);
+    }
+
+    // Update the editor and bank
+    m_fmEditor->setPatch(patch);
+    m_patchBank->setFMPatch(m_selectedFMSlot, patch);
+    updatePatchList();
+
+    // If live edit is on, send to device
+    if (m_liveEditCheck->isChecked()) {
+        sendLivePatch();
+    }
+
+    statusBar()->showMessage("Generated random patch", 2000);
 }
 
 void MainWindow::onNewBank()
@@ -646,6 +1042,9 @@ void MainWindow::loadSettings()
             m_midiPortCombo->setCurrentIndex(idx);
         }
     }
+
+    // Restore Live Edit state
+    m_liveEditCheck->setChecked(settings.value("liveEdit", false).toBool());
 }
 
 void MainWindow::saveSettings()
@@ -656,4 +1055,41 @@ void MainWindow::saveSettings()
     settings.setValue("windowState", saveState());
     settings.setValue("lastSerialPort", m_serialPortCombo->currentText());
     settings.setValue("lastMidiPort", m_midiPortCombo->currentText());
+    settings.setValue("liveEdit", m_liveEditCheck->isChecked());
+}
+
+// =============================================================================
+// MIDI Activity LEDs
+// =============================================================================
+
+void MainWindow::onMidiRxLedTimeout()
+{
+    m_midiRxLed->setStyleSheet("background-color: #333; color: #666; border: 1px solid #555; border-radius: 3px; font-size: 10px;");
+}
+
+void MainWindow::onMidiTxLedTimeout()
+{
+    m_midiTxLed->setStyleSheet("background-color: #333; color: #666; border: 1px solid #555; border-radius: 3px; font-size: 10px;");
+}
+
+void MainWindow::flashMidiTxLed()
+{
+    m_midiTxLed->setStyleSheet("background-color: #ff0; color: #000; border: 1px solid #aa0; border-radius: 3px; font-size: 10px;");
+    m_midiTxTimer->start();
+}
+
+// =============================================================================
+// Live Edit
+// =============================================================================
+
+void MainWindow::sendLivePatch()
+{
+    if (!m_serial->isConnected()) return;
+
+    const FMPatch& patch = m_patchBank->fmPatch(m_selectedFMSlot);
+    uint8_t channel = m_targetChannel->value() - 1;  // Convert to 0-indexed
+
+    // Send to channel only (not slot) for live editing
+    m_serial->sendFMPatchToChannel(channel, patch);
+    flashMidiTxLed();
 }

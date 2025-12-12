@@ -1,15 +1,22 @@
 # Genesis Engine Synth App
 
-Companion application for the [GenesisEngine](https://github.com/yourusername/GenesisEngine) MIDISynth.
+Companion application for the [GenesisEngine](https://github.com/aarontodd82/GenesisEngine) MIDISynth.
 
 ## Features
 
 - **Virtual MIDI Port** - Creates "Genesis Engine" MIDI port for DAWs (macOS/Linux native, Windows requires loopMIDI)
 - **MIDI-to-Serial Bridge** - Forwards MIDI from DAWs to Arduino/Teensy over serial
-- **FM Patch Editor** - Visual editor for YM2612 FM patches with algorithm display
+- **FM Patch Editor** - Visual editor for YM2612 FM patches with algorithm display and interactive envelope widgets
 - **PSG Envelope Editor** - Volume envelope editor for SN76489 channels
 - **Patch Management** - 16 FM slots, 8 PSG slots, bank save/load
 - **File Format Support** - Load TFI, DMP, OPN patch files
+- **Live Edit Mode** - Real-time patch preview: changes are sent to hardware as you edit
+- **MIDI Activity LEDs** - Visual RX/TX indicators show MIDI traffic
+- **On-Screen Keyboard** - Test patches directly without external MIDI controller
+- **Channel Controls** - Pan (L/C/R) and LFO enable per channel
+- **Patch Randomizer** - Generate random FM patches with sensible constraints
+- **Panic Button** - All Notes Off to stop stuck notes
+- **Smart Board Detection** - Automatically detects Teensy vs Arduino and adjusts MIDI routing
 
 ## Requirements
 
@@ -59,6 +66,33 @@ cmake --build .
 5. Enable "Forward to device" to send MIDI to the hardware
 6. Edit patches in the FM Patch Editor tab
 7. Click "Send to Device" to upload patches
+
+### Live Edit Mode
+
+Enable "Live Edit (auto-send on change)" to hear patch changes in real-time:
+- Every parameter tweak is instantly sent to the hardware
+- Use the on-screen keyboard or external MIDI to trigger notes while editing
+- Useful for sound design and quick iteration
+
+### MIDI Activity LEDs
+
+The RX/TX indicators in the MIDI section show MIDI traffic:
+- **RX** (green): Flashes when MIDI is received from the selected input
+- **TX** (yellow): Flashes when MIDI is sent to the hardware
+
+### Teensy vs Arduino Detection
+
+When you connect, the app detects your board type:
+- **Teensy**: MIDI forwarding is disabled by default (your DAW connects directly to Teensy MIDI). Use the app for patch editing.
+- **Arduino**: MIDI forwarding is enabled by default. Create a virtual MIDI port for your DAW to connect to.
+
+### Panic Button
+
+The red "PANIC" button below the keyboard sends All Notes Off and All Sound Off to all channels - useful when notes get stuck.
+
+### Randomize Patch
+
+Click "Randomize Patch" to generate a random FM patch. The randomizer uses sensible constraints (e.g., reasonable envelope times, proper carrier levels) to produce usable sounds.
 
 ## Hardware Compatibility
 

@@ -44,6 +44,9 @@ bool SerialManager::connect(const QString& portName)
     // Extract just the port name (before " - ")
     QString actualPortName = portName.split(" - ").first();
 
+    // Detect board type before connecting
+    m_boardType = detectBoardType(actualPortName);
+
     m_port->setPortName(actualPortName);
     m_port->setBaudRate(BAUD_RATE);
     m_port->setDataBits(QSerialPort::Data8);
@@ -58,7 +61,10 @@ bool SerialManager::connect(const QString& portName)
         m_state = ConnectionState::Connected;
         emit connectionStateChanged(m_state);
         emit connected();
-        qDebug() << "Connected to" << actualPortName;
+        emit boardTypeDetected(m_boardType);
+        qDebug() << "Connected to" << actualPortName
+                 << "(Board type:" << (m_boardType == BoardType::Teensy ? "Teensy" :
+                                       m_boardType == BoardType::Arduino ? "Arduino" : "Unknown") << ")";
 
         // Send ping to verify device
         ping();
@@ -306,10 +312,49 @@ void SerialManager::onReadyRead()
         } else if (m_inSysEx) {
             // Middle of SysEx
             m_rxBuffer.append(c);
-        } else {
-            // Non-SysEx MIDI data (could be debug output or echoed MIDI)
-            emit midiDataReceived(QByteArray(1, c));
+        } else if (byte & 0x80) {
+            // Status byte (new MIDI message)
+            m_midiStatus = byte;
+            m_midiDataCount = 0;
+
+            // Determine expected data bytes based on message type
+            uint8_t msgType = byte & 0xF0;
+            if (msgType == 0xC0 || msgType == 0xD0) {
+                // Program Change, Channel Pressure: 1 data byte
+                m_midiExpectedBytes = 1;
+            } else if (msgType >= 0x80 && msgType <= 0xE0) {
+                // Note Off/On, Poly Pressure, CC, Pitch Bend: 2 data bytes
+                m_midiExpectedBytes = 2;
+            } else {
+                // System messages - ignore for now
+                m_midiExpectedBytes = 0;
+            }
+        } else if (m_midiStatus && m_midiExpectedBytes > 0) {
+            // Data byte
+            if (m_midiDataCount == 0) {
+                m_midiData1 = byte;
+                m_midiDataCount = 1;
+            } else {
+                // Second data byte - message complete
+                m_midiDataCount = 0;
+
+                uint8_t msgType = m_midiStatus & 0xF0;
+                uint8_t channel = m_midiStatus & 0x0F;
+
+                if (msgType == 0xB0) {
+                    // Control Change - emit signal for UI update
+                    emit ccReceived(channel, m_midiData1, byte);
+                }
+            }
+
+            // Handle 1-byte messages
+            if (m_midiExpectedBytes == 1 && m_midiDataCount == 1) {
+                m_midiDataCount = 0;
+            }
         }
+
+        // Always emit raw data for activity monitoring
+        emit midiDataReceived(QByteArray(1, c));
     }
 }
 
@@ -409,4 +454,40 @@ bool SerialManager::isArduinoPort(const QSerialPortInfo& info) const
     QString desc = info.description().toLower();
     return desc.contains("arduino") || desc.contains("teensy") ||
            desc.contains("ch340") || desc.contains("ftdi");
+}
+
+BoardType SerialManager::detectBoardType(const QString& portName) const
+{
+    const auto ports = QSerialPortInfo::availablePorts();
+    for (const QSerialPortInfo& info : ports) {
+        if (info.portName() == portName) {
+            quint16 vid = info.vendorIdentifier();
+
+            // Teensy VID is 0x16C0 (PJRC)
+            if (vid == 0x16C0) {
+                return BoardType::Teensy;
+            }
+
+            // Arduino VIDs
+            if (vid == 0x2341 ||  // Arduino official
+                vid == 0x2A03 ||  // Arduino.org (older)
+                vid == 0x1A86 ||  // CH340 (common clone chip)
+                vid == 0x0403) {  // FTDI (used in some Arduinos)
+                return BoardType::Arduino;
+            }
+
+            // Also check description as fallback
+            QString desc = info.description().toLower();
+            if (desc.contains("teensy")) {
+                return BoardType::Teensy;
+            }
+            if (desc.contains("arduino") || desc.contains("ch340") || desc.contains("mega") || desc.contains("uno")) {
+                return BoardType::Arduino;
+            }
+
+            break;
+        }
+    }
+
+    return BoardType::Unknown;
 }

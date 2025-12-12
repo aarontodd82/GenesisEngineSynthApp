@@ -142,4 +142,13 @@ enum class ConnectionState {
     Error
 };
 
+/**
+ * Detected board type
+ */
+enum class BoardType {
+    Unknown,
+    Teensy,     // Teensy 4.x with USB MIDI
+    Arduino     // Arduino Uno/Mega (no USB MIDI, serial only)
+};
+
 #endif // TYPES_H

@@ -373,52 +373,53 @@ companion/
 
 ## Implementation Phases
 
-### Phase 1: Core Infrastructure
-- [ ] Qt project setup with CMake
-- [ ] Serial port manager with auto-detect
-- [ ] Basic main window layout
-- [ ] FMPatch and PSGEnvelope data structures
+### Phase 1: Core Infrastructure ✅ COMPLETE
+- [x] Qt project setup with CMake
+- [x] Serial port manager with auto-detect
+- [x] Basic main window layout
+- [x] FMPatch and PSGEnvelope data structures
 
-### Phase 2: Patch Editor
-- [ ] Operator parameter controls (knobs/spinboxes)
-- [ ] Algorithm selector with visual display
-- [ ] ADSR envelope visualization
-- [ ] Carrier operator highlighting
+### Phase 2: Patch Editor ✅ COMPLETE
+- [x] Operator parameter controls (knobs/spinboxes)
+- [x] Algorithm selector with visual display
+- [x] ADSR envelope visualization (interactive, draggable)
+- [x] Carrier operator highlighting
 
-### Phase 3: Patch Management
-- [ ] 16-slot FM patch bank
-- [ ] 8-slot PSG envelope bank
-- [ ] TFI file loading/saving
-- [ ] DMP file loading
-- [ ] OPN file loading
-- [ ] GEB bank file format
+### Phase 3: Patch Management ✅ COMPLETE
+- [x] 16-slot FM patch bank
+- [x] 8-slot PSG envelope bank
+- [x] TFI file loading/saving
+- [x] DMP file loading
+- [x] OPN file loading
+- [x] GEB bank file format
 
-### Phase 4: MIDI Integration
-- [ ] Virtual MIDI port (Windows)
-- [ ] Virtual MIDI port (macOS)
-- [ ] Virtual MIDI port (Linux)
-- [ ] MIDI input selection
-- [ ] MIDI → Serial forwarding
-- [ ] SysEx transmission
+### Phase 4: MIDI Integration ✅ COMPLETE
+- [x] Virtual MIDI port (Windows - requires loopMIDI)
+- [x] Virtual MIDI port (macOS - CoreMIDI native)
+- [x] Virtual MIDI port (Linux - ALSA native)
+- [x] MIDI input selection
+- [x] MIDI → Serial forwarding
+- [x] SysEx transmission
 
-### Phase 5: Firmware Updates
-- [ ] Serial MIDI parser for AVR
-- [ ] Conditional USB MIDI compilation
-- [ ] New SysEx commands (dump, identify)
-- [ ] Unified MIDI handling function
+### Phase 5: Firmware Updates ✅ COMPLETE
+- [x] Serial MIDI parser for AVR
+- [x] Conditional USB MIDI compilation
+- [x] New SysEx commands (dump, identify)
+- [x] Unified MIDI handling function
 
-### Phase 6: Polish
-- [ ] MIDI activity monitor
-- [ ] Connection status indicators
-- [ ] Dark/light theme
-- [ ] Keyboard shortcuts
-- [ ] Remember window state
+### Phase 6: Polish ✅ COMPLETE
+- [x] MIDI activity monitor (RX/TX indicators)
+- [x] Connection status indicators
+- [x] Dark theme (default)
+- [x] Keyboard shortcuts (File menu)
+- [x] Remember window state (QSettings)
+- [x] Real-time patch preview (Live Edit mode)
 
 ### Phase 7: Distribution
 - [ ] Windows installer (NSIS or WiX)
 - [ ] macOS .app bundle + DMG
 - [ ] Linux AppImage
-- [ ] Documentation
+- [x] Documentation (README, DESIGN.md)
 
 ## Dependencies
 

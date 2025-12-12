@@ -27,6 +27,7 @@ public:
     void disconnect();
     bool isConnected() const;
     QString connectedPort() const;
+    BoardType detectedBoardType() const { return m_boardType; }
 
     // Raw MIDI message sending
     void sendNoteOn(uint8_t channel, uint8_t note, uint8_t velocity);
@@ -51,11 +52,13 @@ signals:
     void disconnected();
     void connectionError(const QString& error);
     void connectionStateChanged(ConnectionState state);
+    void boardTypeDetected(BoardType type);
 
     // Data received from device
     void patchReceived(uint8_t slot, const FMPatch& patch);
     void identityReceived(uint8_t mode, uint8_t version);
     void midiDataReceived(const QByteArray& data);
+    void ccReceived(uint8_t channel, uint8_t cc, uint8_t value);
 
 private slots:
     void onReadyRead();
@@ -66,12 +69,20 @@ private:
     void sendSysEx(const std::vector<uint8_t>& data);
     void processSysEx(const QByteArray& sysex);
     bool isArduinoPort(const QSerialPortInfo& info) const;
+    BoardType detectBoardType(const QString& portName) const;
 
     QSerialPort* m_port;
     QTimer* m_autoDetectTimer;
     QByteArray m_rxBuffer;
     bool m_inSysEx;
     ConnectionState m_state;
+    BoardType m_boardType = BoardType::Unknown;
+
+    // MIDI message parsing state
+    uint8_t m_midiStatus = 0;      // Running status
+    uint8_t m_midiData1 = 0;       // First data byte
+    int m_midiExpectedBytes = 0;   // How many more data bytes expected
+    int m_midiDataCount = 0;       // Data bytes received so far
 
     static constexpr int BAUD_RATE = 115200;
     static constexpr int AUTO_DETECT_INTERVAL_MS = 2000;

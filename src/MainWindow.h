@@ -8,6 +8,7 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QCheckBox>
+#include <QTimer>
 #include "Types.h"
 
 class SerialManager;
@@ -35,11 +36,13 @@ private slots:
     void onSerialConnected();
     void onSerialDisconnected();
     void onSerialError(const QString& error);
+    void onBoardTypeDetected(BoardType type);
 
     // MIDI
     void onMIDIPortChanged(int index);
     void onMIDIReceived(const std::vector<uint8_t>& message);
     void onCreateVirtualPort();
+    void onCCReceived(uint8_t channel, uint8_t cc, uint8_t value);
 
     // Patch bank
     void onFMPatchSelected(int row);
@@ -54,15 +57,26 @@ private slots:
     // Mode
     void onModeChanged(int index);
 
+    // Channel controls
+    void onPanChanged(int index);
+    void onLfoEnableChanged(bool enabled);
+    void onLfoSpeedChanged(int index);
+
     // Keyboard
     void onKeyboardNoteOn(int note, int velocity);
     void onKeyboardNoteOff(int note);
+    void onPanicClicked();
+    void onRandomizePatchClicked();
 
     // File menu
     void onNewBank();
     void onOpenBank();
     void onSaveBank();
     void onSaveBankAs();
+
+    // MIDI activity
+    void onMidiRxLedTimeout();
+    void onMidiTxLedTimeout();
 
 private:
     void setupUI();
@@ -74,6 +88,8 @@ private:
     void updatePatchList();
     void loadSettings();
     void saveSettings();
+    void flashMidiTxLed();
+    void sendLivePatch();
 
     // Core managers
     SerialManager* m_serial;
@@ -85,6 +101,7 @@ private:
     QPushButton* m_connectButton;
     QPushButton* m_refreshButton;
     QLabel* m_connectionStatus;
+    QLabel* m_boardInfoLabel;
 
     // MIDI panel
     QComboBox* m_midiPortCombo;
@@ -97,6 +114,7 @@ private:
     QPushButton* m_loadPatchButton;
     QPushButton* m_savePatchButton;
     QPushButton* m_sendPatchButton;
+    QPushButton* m_randomizeButton;
 
     // Editors
     FMPatchEditor* m_fmEditor;
@@ -104,6 +122,7 @@ private:
 
     // Keyboard
     PianoKeyboardWidget* m_keyboard;
+    QPushButton* m_panicButton;
 
     // Mode selector
     QComboBox* m_modeCombo;
@@ -112,10 +131,25 @@ private:
     QSpinBox* m_targetChannel;
     QSpinBox* m_targetSlot;
 
+    // Channel controls (LFO, Pan)
+    QComboBox* m_panCombo;
+    QCheckBox* m_lfoEnableCheck;
+    QComboBox* m_lfoSpeedCombo;
+
+    // Live edit
+    QCheckBox* m_liveEditCheck;
+
+    // MIDI activity LEDs
+    QLabel* m_midiRxLed;
+    QLabel* m_midiTxLed;
+    QTimer* m_midiRxTimer;
+    QTimer* m_midiTxTimer;
+
     // State
     QString m_currentBankPath;
     int m_selectedFMSlot = 0;
     int m_selectedPSGSlot = 0;
+    bool m_updatingFromHardware = false;  // Prevents redundant SysEx when updating UI from CC echo
 };
 
 #endif // MAINWINDOW_H
