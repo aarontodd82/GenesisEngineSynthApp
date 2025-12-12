@@ -74,14 +74,14 @@ jobs:
 
           # Create desktop file
           mkdir -p AppDir/usr/share/applications
-          cat > AppDir/usr/share/applications/genesisenginesynth.desktop << 'EOF'
+          cat > AppDir/usr/share/applications/genesisenginesynth.desktop << 'DESKTOP'
           [Desktop Entry]
           Type=Application
           Name=Genesis Engine Synth
           Exec=GenesisEngineSynthApp
           Icon=genesisenginesynth
-          Categories=Audio;Music;
-          EOF
+          Categories=AudioVideo;Audio;Music;
+          DESKTOP
 
           # Create icon
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
@@ -97,9 +97,8 @@ jobs:
           # Create AppImage - find qmake from Qt installation
           export QMAKE=$(find $RUNNER_WORKSPACE -name "qmake6" -o -name "qmake" 2>/dev/null | grep -v QtWebEngine | head -1)
           echo "Using QMAKE: $QMAKE"
+          export OUTPUT=GenesisEngineSynthApp-Linux.AppImage
           ./linuxdeploy-x86_64.AppImage --appdir AppDir --plugin qt --output appimage
-
-          mv *.AppImage GenesisEngineSynthApp-Linux.AppImage
 
       - name: Upload artifact (Windows)
         if: runner.os == 'Windows'
